@@ -1,0 +1,443 @@
+---
+title: "Analysis and prediction of player release clauses for pro football players"
+output:
+  html_document:
+    df_print: paged
+  pdf_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Introduction
+
+This project focuses on analysis of a football player dataset. The dataset used is sourced form the popular video game 'FIFA 19' which contains an extensive collection of data on various professional football players around the world. 
+
+###Problem statement 1 
+We will be taking a look at the data and try to find the best players that money can buy you and some young prospects that you can invest in right away for a relatively small amount but who will go on to become superstars in the future.
+We will also try to construct the best possible team for specific formations of the game.
+
+###Data Source
+Data source - https://www.kaggle.com/karangadiya/fifa19
+
+The dataset is sourced from kaggle.com and has the data from the popular video game "FIFA 19"
+
+The dataset contains informations of real life football players and their playing attributes.
+
+###Problem statement 2 
+
+The world of professional football picks up a frentic pace during the 2 transfer windows of the year where players are allowed to move between different clubs. Clubs are often required to pay a premium transfer fees to secure a player that fits their needs. 
+
+Owing to the disparity in the financial strength of the clubs and also the players' desire to move to a bigger club, it is often seen that big clubs are able to poach away talent from the smaller clubs or even their rivals. 
+
+To make sure that the selling club gets their profit for the player that they are selling, it has become commonplace to insert 'Release Clauses' in player contracts. 
+
+Release clauses for a player specify a certain amount that the buying club will have to pay to the selling club if they are to buy that particular player. They give a player the peace of mind knowing that a bigger club can trigger the clause by payying the specified amount allowing the player to move, while at the same time the selling club can be assured that they will be getting their profit for the time and money invested in the player and will have the funds to reinvest in other players. 
+
+The amount specified on a Release clauses can vary on different variables such as the player's ability, their percieved market value, their age etc. 
+For example - If a player's perceived market value is $10000000 and their age is 18, then it would make sense for the selling club to have the player on a 5 year contract and keep the amount on release clause above their market value so as to deter other clubs from poaching their talent. 
+Often more than not, release clauses for top players are always higher than their market value. 
+This of course can change as player's market value keeps on fluctuating as per their performance on the pitch week in-week out while release clause amount stays the same for the length of the contract. 
+
+We will be using regression models to predict the players release clause values based on the predictor variables available in the dataset. 
+
+As release clause figures are often not disclosed to the public, a predictor model would help the club determine an actual realistic transfer sum they will have to pay to get a player. 
+
+
+```{r libraries,echo=FALSE,warning=FALSE,message=FALSE}
+
+library(dplyr)
+library(ggplot2)
+library(psych)
+library(stringr)
+library(plotly)
+library(ggthemes)
+library(forecast)
+library(leaps)
+library(rpart)
+library(rpart.plot)
+library(tinytex)
+```
+
+
+#### Taking a look at the available dataset columns.
+```{r fifadataset,echo=FALSE}
+fifa1 = read.csv("C:\\Users\\aniru\\Documents\\Northeastern\\Courses\\Data Mining\\Project\\FIFA\\data.csv")
+
+glimpse(fifa1)
+
+
+```
+
+#### Taking a look at the entries in the dataset 
+
+It can seen that while the datset is extensive in providing information about player attributes, there are columns that can be dropped from the dataset for analysis.
+
+```{r playerentries, echo=FALSE}
+fifa1%>%head(10)
+
+```
+
+ 
+
+#### Dropping the columns not needed for analysis
+```{r columnclean, echo=FALSE}
+fifa = select(fifa1, -c(1,2,5,7,11,14,21))
+fifa%>%head(10)
+```
+
+#### Data cleaning
+
+The data in the player value, wages and release clause columns contains special characters and letters like 'K' and 'M' to describe their value. The data needs to pre processed before it can be worked upon.
+We will apply a function to clean the data.
+
+
+```{r dataclean, echo=FALSE}
+dataclean = function(x){
+  regexp = "[[:digit:]]+\\.*[[:digit:]]*"
+  strex=str_extract(x, regexp)
+  num=as.numeric(strex)
+  ifelse(str_detect(x, "K"), num*1000, ifelse(str_detect(x, "M"), num*1000000, num))
+}
+
+fifa$value2= dataclean(fifa$Value)
+fifa$wage2 = dataclean(fifa$Wage)
+fifa$ReleaseClause2 = dataclean(fifa$Release.Clause)
+
+fifa = select(fifa, -c(7,8,82))
+
+fifa%>%head(5)
+
+```
+
+
+
+### Exploring the dataset
+
+####Count of players by postion
+```{r dataexplore, echo=FALSE}
+playerpos = fifa%>%group_by(Position)%>%count(Position)
+
+ggplot(playerpos, mapping = aes(x = Position, y = n))+geom_bar(stat = 'identity',fill = "orange")+coord_flip()+theme_minimal()+ggtitle("The dataset is dominated \nby Goalkeepers and Strikers")+labs(y="count of players", x = "player position")+theme(plot.title = element_text(size = 10))
+
+```
+
+#### Top 15 nations with most players
+```{r dataexplorenation, echo=FALSE}
+playernation = fifa%>%group_by(Nationality)%>%count(Nationality)%>%arrange(desc(n))%>%head(15)
+ggplot(playernation, mapping = aes(x = Nationality, y = n))+geom_bar(stat = 'identity', fill = "#ff1a1a")+theme_minimal()+coord_flip()+labs(y="count of players", x = "player Nationality")
+
+```
+
+#### Count of players by preferred foot
+```{r dataexploreclub, echo=FALSE}
+
+playerfoot = fifa%>%group_by(Preferred.Foot)%>%count(Preferred.Foot)%>%arrange(desc(n))%>%head(2)
+ggplot(playerfoot, mapping = aes(x = Preferred.Foot, y = n, fill = "#ff8c1a"))+geom_bar(stat = 'identity')+theme_minimal()+labs(y="count of players", x = "Preferred Foot")+ggtitle("Clearly the game has more right-footed players")+theme(plot.title = element_text(size = 10))
+```
+
+
+### First Problem statement
+
+In order to build a team of  superstars, lets take a look at the teams that currently have the top players and their squad values. 
+
+We will try to identify how clubs invest their money in players
+
+#### The business of football
+
+As we can see, Juventus invest big money but they also tend to do it wisely, while Inter and Napoli have been keeping the Overall ratings high while keeping a check on the wage budget.(First graph) 
+
+The business patterns can also be seen when the club squad values are mapped against the average overalll rating of the players. (Second graph)
+
+```{r, squadwages, echo=FALSE}
+squadval = fifa%>%group_by(Club)%>%summarise(clubsquadvalue = sum(value2), clubovr=mean(Overall), avgwage=mean(wage2), avgpotential=mean(Potential))%>%arrange(desc(clubsquadvalue))
+
+top_n(squadval,n=20, clubsquadvalue)%>%ggplot(squadval,mapping = aes(x=avgwage,y=clubovr))+geom_point(aes(color=Club,size=4))+geom_text(aes(label=Club),hjust=0, vjust=0)+theme_minimal()+labs(y="Average Overall rating of players", x = "Average wage of players")
+
+```
+
+
+
+
+```{r squadvalues, echo=FALSE}
+top_n(squadval,n=20, clubsquadvalue)%>%ggplot(squadval,mapping = aes(x=clubsquadvalue,y=clubovr))+geom_point(aes(color=Club,size=4))+geom_text(aes(label=Club),hjust=0, vjust=0)+theme_minimal()+labs(y="Average Overall rating of players", x = "Average squad value")
+```
+
+#### Betting on the future
+
+However, clubs also pay big money for talented young players, this inflates the squad values while keeping the average overall rating low, as young players are expected to grow over time and their current ratings are lower as they are still developing. 
+
+We can see that Real Madrid and Barcelona are betting big on youth, as their player potential shows a remarkable jump as compared to their current overall ratings. 
+
+```{r squadpot, echo=FALSE}
+top_n(squadval,n=20, clubsquadvalue)%>%ggplot(squadval,mapping = aes(x=clubsquadvalue,y=avgpotential))+geom_point(aes(color=Club,size=4))+geom_text(aes(label=Club),hjust=0, vjust=0)+labs(y="Average Potential rating of players", x = "Average wage amount")
+```
+
+#### Finding the next Superstar
+
+Amongst the young crop of players, there are a few with potential to become world beaters.
+We will try to find these talents. 
+
+We will assign weights to their Potential rating and current rating so as to find players with maximum potential growth
+
+```{r futurestar, echo=FALSE}
+fifa$pdiff =  fifa$Potential-fifa$Overall
+fifa$mean_pot_avg = ((0.6*fifa$Potential)+(0.4*fifa$Overall))/2
+fifa%>%filter(Age<=20)%>%arrange(desc(mean_pot_avg))%>%filter(Potential>=80)%>%head(20)
+hot_prospects = fifa%>%filter(Age<=20)%>%arrange(desc(mean_pot_avg))%>%filter(Potential>=80)%>%group_by(Nationality)%>%count(Nationality)%>%arrange(desc(n))%>%head(15)
+```
+
+
+####Countries with a bright future?
+
+Which country has the best crop of young players?
+```{r countryfuture, echo= FALSE}
+ggplot(hot_prospects,mapping = aes(x = Nationality , y = n))+geom_bar(stat='identity', fill = "#1a8dff")+coord_flip()+theme_minimal()+labs(y="Player Nationality", x = "Number of players")+ggtitle("The traditional football powerhouses keep \nproducing more talented players")
+```
+
+####Finding the bargain deals
+
+Best young prospects that won't be extremely costly and will have the most potential to grow. 
+
+```{r, cheapprospects, echo=FALSE}
+fifa%>%filter(Age<=20)%>%arrange(desc(mean_pot_avg))%>%arrange(Age)%>%arrange(desc(Potential))%>%filter(value2<=500000)%>%filter(Potential>=80)%>%head(10)
+
+
+```
+#### Forming the best team for a traditional 4-4-2 formation
+we will keep age less than 28 as that is when a footballer is at their peak
+
+```{r fourfourtwo, echo=FALSE}
+## Forming the best team for a particular formation
+
+fourfourtwo = array(c("GK","RB","RCB","LCB","LB","RM","RCM","LCM","LM","RS","LS"))
+
+fourfourtwoformation =data.frame(matrix(ncol = 4, nrow = 0))
+colnames(fourfourtwoformation) = c("Name","Club","Age","Position")
+
+for(pos in fourfourtwo){
+ temp= fifa1%>%filter(Position == pos)%>%arrange(desc(Overall))%>% filter(Age<=29)%>%head(1)%>%select("Name","Club","Age","Overall")
+
+ fourfourtwoformation=rbind(fourfourtwoformation,temp)
+}
+
+fourfourtwoformation
+```
+
+#### Forming the best team for a 3-5-2 formation
+```{r threefivetwo, echo=FALSE}
+## Forming the best team for a particular formation
+
+threefivetwo = array(c("GK","RCB","CB","LCB","RWB","RCM","CM","LCM","LWB","RS","LS"))
+
+threefivetwoformation =data.frame(matrix(ncol = 4, nrow = 0))
+colnames(threefivetwoformation) = c("Name","Club","Age","Position")
+
+for(pos in threefivetwo){
+ temp= fifa1%>%filter(Position == pos)%>%arrange(desc(Overall))%>% filter(Age<=29)%>%head(1)%>%select("Name","Club","Age","Overall")
+
+ threefivetwoformation=rbind(threefivetwoformation,temp)
+}
+
+threefivetwoformation
+```
+
+
+
+#### Problem statement 2
+
+We will now use the data to predict the release clause amounts for the players.
+
+##### Players with highest release clause values
+*figures are in pounds
+
+```{r releaseclausehigh, echo= FALSE }
+fifa%>%select("Name","Age", "Overall","Position","ReleaseClause2")%>%arrange(desc(ReleaseClause2))%>%head(10)
+```
+
+We will drop the unnecessary columns and convert categorical variables into dummy variables
+
+```{r dataconvert, echo=FALSE}
+
+### Drop the columns that are not neccessary
+releasedata =fifa[,(c("Age","Overall","Potential","value2","wage2","ReleaseClause2","Position"))] 
+### Converting position into dummy variables
+releasedata = fastDummies::dummy_cols(releasedata, select_columns = "Position")
+releasedata = releasedata[,-7]
+
+releasedata
+
+```
+
+#### Stadardizing the data
+
+We will need to standardize the data before we can work on it.
+
+We will now create a function to standardize the variables.
+
+Following is the data after standardization
+
+```{r standardize function, echo=FALSE}
+##Standardize function
+
+standardize=function(x){
+  return((x-min(x))/(max(x)-min(x)))
+}
+
+
+## Reverse Standardize
+
+reversestandardize=function(x){
+  return(x*(max(releasedata$ReleaseClause2)-min(releasedata$ReleaseClause2))+min(releasedata$ReleaseClause2))
+}
+
+
+releasedata=na.omit(releasedata)
+
+
+releasedata$newage= standardize(releasedata$Age)
+releasedata$newoverall= standardize(releasedata$Overall)
+releasedata$newpotential= standardize(releasedata$Potential)
+releasedata$newvalue= standardize(releasedata$value2)
+releasedata$newwage=standardize(releasedata$wage2)
+releasedata$newreleaseclause= standardize(releasedata$ReleaseClause2)
+
+releasedata2 = releasedata[,-(c(1,2,3,4,5,6))]
+
+releasedata2
+
+```
+
+####Partitioning the Data
+
+The data will be partitioned into Training and Validation data sets
+Following is a snapshot of the training data
+```{r partitiondata, echo=FALSE}
+set.seed(1)
+releasetrainindex= sample(c(1:dim(releasedata2)[1]),dim(releasedata2)[1]*0.6)
+releasetrain = releasedata2[releasetrainindex,]
+releasevalid = releasedata2[-releasetrainindex,]
+
+releasetrain%>%head(5)
+```
+
+
+####Regression Trees
+
+We will first try using a regression tree to predict the release clause values.
+
+As we can see the value of the player and their overall rating are the most important factors while determing the release clause value as per the regression tree. 
+```{r regressiontree, echo=FALSE,warning=FALSE,message=FALSE}
+tvaluetree= rpart(formula=newreleaseclause ~., data=releasetrain,method = "anova",cp=0.001,minbucket=1)
+prunedtree = prune(tvaluetree, cp= tvaluetree$cptable[which.min(tvaluetree$cptable[,"xerror"]),"CP"])
+summary(prunedtree)
+prp(prunedtree, type = 1, extra = 1, split.font = 1, varlen = -10)
+
+valueprediction = predict(prunedtree,releasevalid)
+
+reversestandardizedprediction = reversestandardize(valueprediction)
+reversestandardizedvalue = reversestandardize(releasevalid$newreleaseclause)
+
+
+```
+
+####Evaluating the performance of the tree
+
+The tree gives out a sizable error while predicting the release clause values. 
+We will check for a linear regression model and compare the two. 
+
+```{r regressionperformance, echo=FALSE}
+accuracy(reversestandardizedprediction,reversestandardizedvalue)
+
+```
+#### Linear regression
+
+We will now try a linear regression model 
+```{r linearregression, echo = FALSE,warning=FALSE,message=FALSE}
+
+releaselm= lm(newreleaseclause ~ . , data = releasetrain)
+releaselinearpred = predict(releaselm, releasevalid)
+reversestandardizedlinearpred = reversestandardize(releaselinearpred)
+summary(releaselm)
+
+##Backward elimination
+releasestep = step(releaselm,direction = "backward")
+releasesteppred = predict(releasestep,releasevalid)
+reversesteppred = reversestandardize(releasesteppred)
+
+
+##Exhaustive elimination
+releaseex = regsubsets(newreleaseclause ~ . , data = releasetrain, nbest=1, nvmax = dim(releasetrain)[2],method = "exhaustive")
+
+exsummary = summary(releaseex)
+
+exsummary
+which.max(exsummary$adjr2)
+
+exhaustivetrainingset = releasetrain[,c(1,2,6,7,11,12,16,20,21,22,25,30,31,32,33,34)]
+
+exhaustivemodel = lm(newreleaseclause ~ . , data = exhaustivetrainingset)
+exhaustivepred = predict(exhaustivemodel,releasevalid)
+reverseexhaustivepred = reversestandardize(exhaustivepred)
+
+```
+
+
+####Evaluating the performance of a linear regression model
+
+Results for the first linear regression model
+```{r linearregression1, echo = FALSE}
+accuracy(reversestandardizedlinearpred,reversestandardizedvalue)
+summary(reversestandardizedlinearpred)
+```
+
+Results for the linear regression model with Backward elimination
+```{r linearregressionback, echo = FALSE}
+accuracy(reversesteppred,reversestandardizedvalue)
+summary(reversesteppred)
+```
+Results for the linear regression model with exhaustive elimination
+```{r linearregressionex, echo = FALSE}
+accuracy(reverseexhaustivepred,reversestandardizedvalue)
+summary(reverseexhaustivepred)
+```
+
+
+```{r}
+
+plot(releasestep)
+```
+
+####Model review
+
+It can be seen that the way to go will be to select the linear regression model with backward elimination method applied. 
+The error can be due to the fact that the variables in this dataset are not exhaustive enough to accurately determine the Release clause value. 
+
+
+
+
+#### Insights from the model
+
+The release clause value has a lot more factors attached to it such as the market conditions at the moment, the selling club's financial conditions and the club's positive/negative attitude on release clauses.
+As we can see from the plot's some clubs such as FC Barcelona and Real Madrid have a tendency to have really high value release clauses. This can be seen from the regression model when plotted as players from these clubs tend to have the most impact in the model. 
+
+This further shows that to build an effective release clause predictor will need more data than just the player's attributes.  
+
+However in the grand scheme of things, this model has an RMSE of about a 1.2 million pounds which in a real life scenario for a huge club would not be a big sum to be worried about. 
+
+This does not serve as a justification for this model but it points to this model being an effective yardstick for clubs to prepare their initial transfer bids. 
+
+#### Project Outcome
+
+The current football market has seen a trend where transfer sums for player tend to be closer to the release clause values, unless the release clause has an extraordinary amount such as that of Lionel Messi.
+
+This model will help clubs prepare their initial bids for the players so that they don't end up in scenario where their offers are not outright rejected at the very begininng. 
+
+The model will help clubs prepare a bid that will help them get their foot in the door, with the further amount depending on negotiation. 
+
+
+
+
+
+
