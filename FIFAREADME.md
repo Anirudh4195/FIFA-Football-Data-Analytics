@@ -1,4 +1,4 @@
-#Introduction
+Introduction
 This project focuses on analysis of a football player dataset. The dataset used is sourced form the popular video game ‘FIFA 19’ which contains an extensive collection of data on various professional football players around the world.
 
 Problem statement 1
